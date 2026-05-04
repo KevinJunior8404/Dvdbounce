@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DVD Bounce</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+    cursor: none;
+  }
+
+  #screen {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    border: 3px solid #222;
+    box-shadow:
+      inset 0 0 0 1px #333,
+      inset 0 0 60px rgba(255,255,255,0.03);
+  }
+
+  /* Corner markers */
+  #screen::before, #screen::after,
+  .corner-tl, .corner-tr, .corner-bl, .corner-br {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-color: #444;
+    border-style: solid;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .corner-tl { top: 8px; left: 8px; border-width: 2px 0 0 2px; }
+  .corner-tr { top: 8px; right: 8px; border-width: 2px 2px 0 0; }
+  .corner-bl { bottom: 8px; left: 8px; border-width: 0 0 2px 2px; }
+  .corner-br { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+
+  /* Animated border glow on bounce */
+  #screen.flash-border {
+    border-color: var(--bounce-color, #444);
+    box-shadow:
+      inset 0 0 0 1px var(--bounce-color, #444),
+      inset 0 0 60px rgba(255,255,255,0.03),
+      0 0 30px var(--bounce-color, #444);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  #logo {
+    position: absolute;
+    width: 160px;
+    height: 160px;
+    user-select: none;
+    pointer-events: none;
+    transition: filter 0.1s;
+  }
+
+  #logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+
+  #corner-flash {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #fff;
+    font-size: 1.2rem;
+    letter-spacing: 0.2em;
+    opacity: 0;
+    text-transform: uppercase;
+    pointer-events: none;
+    transition: opacity 0.3s;
+    text-shadow: 0 0 20px currentColor;
+  }
+
+  #corner-flash.show {
+    opacity: 1;
+  }
+
+  #counter {
+    position: fixed;
+    bottom: 20px;
+    right: 24px;
+    color: #333;
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  #upload-hint {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #444;
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    pointer-events: none;
+    transition: opacity 1s;
+  }
+
+  #upload-btn {
+    position: fixed;
+    bottom: 20px;
+    left: 24px;
+    background: transparent;
+    border: 1px solid #333;
+    color: #444;
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  #upload-btn:hover {
+    border-color: #888;
+    color: #888;
+  }
+
+  #file-input { display: none; }
+</style>
+</head>
+<body>
+
+<div id="screen">
+  <div class="corner-tl"></div>
+  <div class="corner-tr"></div>
+  <div class="corner-bl"></div>
+  <div class="corner-br"></div>
+  <div id="logo">
+    <!-- Default: DVD-style SVG logo -->
+    <svg id="dvd-svg" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+      <ellipse cx="80" cy="80" rx="78" ry="78" fill="currentColor" opacity="0.15"/>
+      <ellipse cx="80" cy="80" rx="78" ry="78" fill="none" stroke="currentColor" stroke-width="3"/>
+      <circle cx="80" cy="80" r="12" fill="currentColor" opacity="0.4"/>
+      <circle cx="80" cy="80" r="6" fill="#000"/>
+      <!-- DVD text -->
+      <text x="80" y="52" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="22" font-weight="900" fill="currentColor" letter-spacing="2">DVD</text>
+      <text x="80" y="120" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="currentColor" opacity="0.7" letter-spacing="4">VIDEO</text>
+    </svg>
+    <img id="custom-img" src="" style="display:none;" alt="bouncing logo"/>
+  </div>
+</div>
+
+<div id="corner-flash">CORNER!</div>
+<div id="counter">corners: <span id="count">0</span></div>
+<div id="upload-hint">drop an image or click upload</div>
+
+<button id="upload-btn" onclick="document.getElementById('file-input').click()">📁 upload image</button>
+<input type="file" id="file-input" accept="image/*">
+
+<script>
+  const logo = document.getElementById('logo');
+  const screen = document.getElementById('screen');
+  const flash = document.getElementById('corner-flash');
+  const countEl = document.getElementById('count');
+  const hint = document.getElementById('upload-hint');
+  const dvdSvg = document.getElementById('dvd-svg');
+  const customImg = document.getElementById('custom-img');
+  let borderFlashTimeout;
+
+  let x, y, vx, vy;
+  const speed = 2.5;
+  let W, H, logoW, logoH;
+  let corners = 0;
+  let hue = 0;
+  let flashTimeout;
+  let usingCustom = false;
+
+  const colors = [
+    '#ff4444', '#ff8800', '#ffee00',
+    '#44ff44', '#00ccff', '#8844ff',
+    '#ff44aa', '#00ffcc'
+  ];
+  let colorIdx = 0;
+
+  function getColor() {
+    return colors[colorIdx % colors.length];
+  }
+
+  function setColor(c) {
+    logo.style.color = c;
+    if (usingCustom) {
+      customImg.style.filter = `drop-shadow(0 0 8px ${c})`;
+    }
+  }
+
+  function nextColor() {
+    colorIdx++;
+    const c = getColor();
+    setColor(c);
+    // Flash the border with the new color
+    screen.style.setProperty('--bounce-color', c);
+    screen.classList.add('flash-border');
+    clearTimeout(borderFlashTimeout);
+    borderFlashTimeout = setTimeout(() => {
+      screen.classList.remove('flash-border');
+      screen.style.removeProperty('--bounce-color');
+    }, 200);
+  }
+
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    logoW = logo.offsetWidth;
+    logoH = logo.offsetHeight;
+    // Keep in bounds after resize
+    x = Math.min(x ?? Math.random() * (W - logoW), W - logoW);
+    y = Math.min(y ?? Math.random() * (H - logoH), H - logoH);
+  }
+
+  function init() {
+    resize();
+    // Random start direction
+    const angle = (Math.random() * 60 + 20) * Math.PI / 180;
+    const dirX = Math.random() < 0.5 ? 1 : -1;
+    const dirY = Math.random() < 0.5 ? 1 : -1;
+    vx = Math.cos(angle) * speed * dirX;
+    vy = Math.sin(angle) * speed * dirY;
+    setColor(getColor());
+  }
+
+  function triggerCorner() {
+    corners++;
+    countEl.textContent = corners;
+    clearTimeout(flashTimeout);
+    flash.classList.add('show');
+    flashTimeout = setTimeout(() => flash.classList.remove('show'), 700);
+    // Screen flash
+    document.body.style.background = '#111';
+    setTimeout(() => document.body.style.background = '#000', 80);
+  }
+
+  function animate() {
+    x += vx;
+    y += vy;
+
+    let hitX = false, hitY = false;
+
+    if (x <= 0) { x = 0; vx = Math.abs(vx); hitX = true; }
+    if (x >= W - logoW) { x = W - logoW; vx = -Math.abs(vx); hitX = true; }
+    if (y <= 0) { y = 0; vy = Math.abs(vy); hitY = true; }
+    if (y >= H - logoH) { y = H - logoH; vy = -Math.abs(vy); hitY = true; }
+
+    if (hitX || hitY) {
+      nextColor();
+      if (hitX && hitY) triggerCorner();
+    }
+
+    logo.style.left = x + 'px';
+    logo.style.top = y + 'px';
+
+    requestAnimationFrame(animate);
+  }
+
+  // File upload
+  document.getElementById('file-input').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    customImg.src = url;
+    customImg.style.display = 'block';
+    dvdSvg.style.display = 'none';
+    usingCustom = true;
+    hint.style.opacity = '0';
+    setColor(getColor());
+  });
+
+  // Drag & drop
+  document.addEventListener('dragover', e => e.preventDefault());
+  document.addEventListener('drop', e => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    const url = URL.createObjectURL(file);
+    customImg.src = url;
+    customImg.style.display = 'block';
+    dvdSvg.style.display = 'none';
+    usingCustom = true;
+    hint.style.opacity = '0';
+    setColor(getColor());
+  });
+
+  window.addEventListener('resize', resize);
+
+  // Hide hint after 4s
+  setTimeout(() => hint.style.opacity = '0', 4000);
+
+  init();
+  animate();
+</script>
+</body>
+</html>
